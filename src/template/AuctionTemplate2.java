@@ -126,7 +126,7 @@ public class AuctionTemplate2 implements AuctionBehavior {
 	
 	@Override
 	public Long askPrice(Task task) {
-	    long price = (long) marginalCost(task, true);
+	    long price = (long) marginalCost(task);
 	    
 	    if (price < 0) {
 	        System.out.println(agent.id() + " is pretty dumb, " + price);
@@ -137,11 +137,52 @@ public class AuctionTemplate2 implements AuctionBehavior {
 	    return (long) (price * (1 + confidence));
 	}
 	
+	private double bayesianMarginalCost(Task t) {
+        double cost = 0;
+        double weights = 0;
+        
+        for(City from : topology.cities()) {
+            for(City to : topology.cities()) {
+                if(isLink(from, to, t, wonTasks)) {
+                    Task potential = new Task(-1, from, to, 0, 0);
+                    Set<Task> includePotential = new HashSet<Task>(wonTasks);
+                    includePotential.add(potential);
+                    double weight = distribution.probability(from, to);
+                    weights += weight;
+                    cost += weight * marginalCost(t, includePotential, false);
+                }
+            }
+        }
+        
+        return cost / weights;
+    }
+	
+	private boolean isLink(City potentialFrom, City potentialTo, Task toBid, Set<Task> won) {
+        boolean isLink = false;
+        
+        //it is a link if there is some match between toBid's cities and link's cities
+        isLink = potentialFrom.equals(toBid.pickupCity)
+              || potentialTo.equals(toBid.deliveryCity)
+              || potentialFrom.equals(toBid.deliveryCity)
+              || potentialTo.equals(toBid.pickupCity);
+        
+        for(Task t : won) {
+            isLink = isLink || potentialFrom.equals(t.pickupCity)
+                            || potentialTo.equals(t.deliveryCity);
+        }
+        
+        return isLink;
+	}
+	
 	private double marginalCost(Task toBid) {
 	    return marginalCost(toBid, false);
 	}
 	
 	private double marginalCost(Task toBid, boolean verbose) {
+	    return marginalCost(toBid, wonTasks, verbose);
+	}
+	
+	private double marginalCost(Task toBid, Set<Task> wonTasks, boolean verbose) {
 	    long start = System.currentTimeMillis();
 	    // 1st step: compute cost/solution without toBid
 	    Solution without = Solution.selectInitialSolutionBis(agent.vehicles(), wonTasks);
