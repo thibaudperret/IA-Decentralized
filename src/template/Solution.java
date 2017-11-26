@@ -12,6 +12,7 @@ import java.util.Objects;
 import java.util.Random;
 import java.util.Set;
 
+import logist.Measures;
 import logist.simulation.Vehicle;
 import logist.task.Task;
 import logist.task.TaskSet;
@@ -252,6 +253,54 @@ public class Solution {
         
         return new Solution(plan);
     }
+    
+    /**
+     * Alternate initial solution where we put tasks in every vehicle
+     */
+    public static Solution selectInitialSolutionBis(List<Vehicle> vehicles, Set<Task> tasks) {
+        int vehicle = 0;
+        
+        Map<Vehicle, List<TaskAugmented>> plan = new HashMap<Vehicle, List<TaskAugmented>>();
+        // init
+        for(Vehicle v : vehicles) {
+            plan.put(v, new LinkedList<TaskAugmented>());
+        }
+        
+        for (Task task : tasks) {
+            TaskAugmented tp = new TaskAugmented(task, true);
+            TaskAugmented td = new TaskAugmented(task, false);
+            
+            while (task.weight > vehicles.get(vehicle).capacity()) {
+                vehicle = (vehicle + 1) % vehicles.size();
+            }
+            
+            plan.get(vehicles.get(vehicle)).add(tp);
+            plan.get(vehicles.get(vehicle)).add(td);
+            
+            vehicle = (vehicle + 1) % vehicles.size();
+        }
+        
+        return new Solution(plan);
+    }
+    
+    public static Solution finalSolution(Solution initS, long timeoutPlan) {
+        Solution returnS = initS;
+        long start = System.currentTimeMillis();
+        
+        Solution best = initS;
+    
+        // We subtract 600 ms from the timeoutPlan so that we do not realise too late we've taken too much time
+        while (System.currentTimeMillis() - start > timeoutPlan - 600) {
+            List<Solution> neighbors = getNeighbors(returnS);
+            neighbors.add(best);
+            best = getBest(neighbors);
+            
+            returnS = neighbors.get(random.nextInt(neighbors.size()));
+        }
+
+        // return returnS;
+        return best;
+    }
 
 
     /**
@@ -260,29 +309,51 @@ public class Solution {
     public static Solution finalSolution(Solution initS, int iter, long timeoutPlan) {
         Solution returnS = initS;
         long start = System.currentTimeMillis();
-        int lastCost = 0;
-        boolean inferior;
-        int count = 0;
+        
+        Solution best = initS;
         
         for (int i = 0; i < iter; ++i) {
-            // We subtract 100 ms from the timeoutPlan so that we do not realise too late we've taken too much time
-            if (System.currentTimeMillis() - start > timeoutPlan - 1000 || count > 100) {
-                return returnS;
+            if (System.currentTimeMillis() - start > timeoutPlan - 1000) {
+                return best;
             }
-            returnS = chooseNeighbors(returnS, probability);   
+            List<Solution> neighbors = getNeighbors(returnS);
+            neighbors.add(best);
+            best = getBest(neighbors);
             
-            int cost = cost(returnS);
-            inferior = Math.abs(lastCost - cost) < 0.01;
-            lastCost = cost;
-            
-            if (inferior) {
-                ++count;
-            } else {
-                count = 0;
-            }
+            returnS = neighbors.get(random.nextInt(neighbors.size()));
         }
 
-        return returnS;
+        // return returnS;
+        return best;
+    }
+    
+    private static List<Solution> getNeighbors(Solution s) {
+        List<Vehicle> nonEmptyVehicles = new ArrayList<Vehicle>();
+        for (Vehicle v2 : s.vehicles()) {
+            if (!s.get(v2).isEmpty()) {
+                nonEmptyVehicles.add(v2);
+            }
+        }
+        
+        if (nonEmptyVehicles.isEmpty()) {
+            return new ArrayList<Solution>();
+        }
+        
+        // get random vehicle that's not empty
+        Vehicle v = nonEmptyVehicles.get(random.nextInt(nonEmptyVehicles.size()));
+
+        List<TaskAugmented> vTasks = s.get(v);
+        Task t = vTasks.get(random.nextInt(vTasks.size())).task(); // the task that will be passed to other vehicles and changed in order
+
+        List<Solution> changedVehicleList = changeVehicle(s, v, t);
+
+        List<Solution> changedOrderList = changeOrder(s, v, t);
+
+        List<Solution> changedEverythingList = new ArrayList<Solution>();
+        changedEverythingList.addAll(changedVehicleList);
+        changedEverythingList.addAll(changedOrderList);
+
+        return changedEverythingList;
     }
     
     /**
@@ -347,18 +418,18 @@ public class Solution {
     }
     
     public static int cost(Solution s) {
-        int totalCost = 0;
+        double totalCost = 0.d;
         for (Vehicle v : s.vehicles()) {
             totalCost += cost(s, v);
         }
         
-        return totalCost;
+        return (int) totalCost;
     }
      
     /**
      * Cost of a solution for one vehicle
      */
-    public static int cost(Solution s, Vehicle v) {
+    public static double cost(Solution s, Vehicle v) {
         int cost = 0;
         
         if (s.get(v).isEmpty()) {
@@ -371,7 +442,7 @@ public class Solution {
             cost += s.get(v).get(i).city().distanceUnitsTo(s.get(v).get(i + 1).city());
         }
         
-        return cost;
+        return Measures.unitsToKM(cost) * v.costPerKm();
     }
     
     /**

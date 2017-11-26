@@ -2,18 +2,20 @@ package template;
 
 //the list of imports
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Random;
+import java.util.Map;
 import java.util.Set;
 
 import logist.LogistSettings;
 import logist.Measures;
+import logist.agent.Agent;
 import logist.behavior.AuctionBehavior;
 import logist.config.Parsers;
-import logist.agent.Agent;
-import logist.simulation.Vehicle;
+import logist.plan.Action;
 import logist.plan.Plan;
+import logist.simulation.Vehicle;
 import logist.task.Task;
 import logist.task.TaskDistribution;
 import logist.task.TaskSet;
@@ -33,8 +35,12 @@ public class AuctionTemplate2 implements AuctionBehavior {
 	private Agent agent;
 	
     private long timeoutPlan;
+    private long timeoutBid;
     
-	public Set<Task> wonTasks;
+    private Map<Integer, Integer> wins;
+    
+	private Set<Task> wonTasks;
+	private double confidence;
 
 	@Override
 	public void setup(Topology topology, TaskDistribution distribution, Agent agent) {
@@ -50,99 +56,177 @@ public class AuctionTemplate2 implements AuctionBehavior {
         }
 
         timeoutPlan = ls.get(LogistSettings.TimeoutKey.PLAN);
+        timeoutBid = ls.get(LogistSettings.TimeoutKey.BID);
+        
+        wins = new HashMap<Integer, Integer>();
         
         wonTasks = new HashSet<Task>();
+        confidence = -0.05d;
 	}
 
     @Override
     public List<Plan> plan(List<Vehicle> vehicles, TaskSet tasks) {
-        // TODO Auto-generated method stub
-        return null;
+        List<Plan> plans = new ArrayList<Plan>();
+        
+        Solution finalS = Solution.selectInitialSolution(vehicles, wonTasks);
+        finalS = Solution.finalSolution(finalS, 20000, timeoutPlan);
+
+        System.out.println();
+        System.out.println("***********");
+        System.out.println("| agent " + agent.id() + " |");
+        System.out.println("***********");
+        System.out.println(finalS);
+        System.out.println(wonTasks.size() + " tasks");        
+        System.out.println("cost is " + Solution.cost(finalS) + ", win is " + wins.get(agent.id()));
+
+        for (Vehicle v : vehicles) {
+            City previous = v.getCurrentCity();
+            Plan plan = new Plan(previous);
+
+            if (finalS != null) {
+                for (TaskAugmented t : finalS.get(v)) {
+                    for (City c : previous.pathTo(t.city())) {
+                        plan.append(new Action.Move(c));
+                    }
+
+                    if (t.isPickup()) {
+                        plan.append(new Action.Pickup(t.task()));
+                    } else {
+                        plan.append(new Action.Delivery(t.task()));
+                    }
+
+                    previous = t.city();
+                }
+            }
+
+            plans.add(plan);
+        }
+
+        return plans;
     }
 
 	@Override
 	public void auctionResult(Task previous, int winner, Long[] bids) {
+	    wins.put(winner, (int) (wins.getOrDefault(winner, 0) + previous.reward));
+	    
+        System.out.println();
+        System.out.println(winner + " won " + previous);
+        for (int i = 0; i < bids.length; ++i) {
+            System.out.print("  " + i + " bidded " + bids[i] + " CHF");
+            System.out.println(i == agent.id() ? " (confidence was " + String.format("%.2g", confidence) + ")" : "");
+        }
+        
 		if (winner == agent.id()) {
-		    wonTasks.add(previous);
+		    wonTasks.add(previous);            
+		    confidence += 0.05d;
+		} else {
+		    confidence = Math.max(confidence - 0.05d, 0d);
 		}
 	}
 	
 	@Override
 	public Long askPrice(Task task) {
-	    return (long) marginalCost(task);
+	    long price = (long) marginalCost(task, true);
+	    
+	    if (price < 0) {
+	        System.out.println(agent.id() + " is pretty dumb, " + price);
+	    }
+	    
+	    price = Math.max(price, 20);
+	    
+	    return (long) (price * (1 + confidence));
 	}
 	
 	private double marginalCost(Task toBid) {
+	    return marginalCost(toBid, false);
+	}
+	
+	private double marginalCost(Task toBid, boolean verbose) {
+	    long start = System.currentTimeMillis();
 	    // 1st step: compute cost/solution without toBid
-	    Solution without = Solution.selectInitialSolution(agent.vehicles(), wonTasks);
-	    without = Solution.finalSolution(without, 1000, timeoutPlan);	    
-	    double costWithout = Solution.cost(without);
+	    Solution without = Solution.selectInitialSolutionBis(agent.vehicles(), wonTasks);
+	    without = Solution.finalSolution(without, 10000, timeoutBid / 2);	    
+	    int costWithout = Solution.cost(without);
 	    
 	    // 2nd step: compute cost/solution with toBid
 	    Set<Task> wonAndToBid = new HashSet<Task>(wonTasks);
 	    wonAndToBid.add(toBid);
 	    
-	    Solution with = Solution.selectInitialSolution(agent.vehicles(), wonAndToBid);
-	    with = Solution.finalSolution(with, 1000, timeoutPlan);
-        double costWith = Solution.cost(with);
-        double marginalCost = costWith - costWithout;
+	    Solution with = Solution.selectInitialSolutionBis(agent.vehicles(), wonAndToBid);
+	    with = Solution.finalSolution(with, 10000, timeoutBid / 2);
+        int costWith = Solution.cost(with);
+        int marginalCost = costWith - costWithout;
         
 	    
 	    // 3rd step: check if obvious non optimal solutions
         Solution withoutEstimator = Solution.greedySolutionRemove(with, toBid); 
-        double costWithoutEstimator = Solution.cost(withoutEstimator);  
+        int costWithoutEstimator = Solution.cost(withoutEstimator);  
         
         Solution withEstimator = Solution.greedySolutionAdd(without, toBid);     
-        double costWithEstimator = Solution.cost(withEstimator);     
+        int costWithEstimator = Solution.cost(withEstimator);     
         
-        double upperBound = costWithEstimator - costWithout;
+        int upperBound = costWithEstimator - costWithout;
         int count = 3;
-        boolean problemWith = marginalCost > upperBound;
         boolean problemWithout = marginalCost < 0;
+        boolean problemWith = marginalCost > upperBound;
         
         while ((problemWith || problemWithout) && count > 0) {
             --count;
+            long now = System.currentTimeMillis();
         
             if (problemWithout) {
                 // Problem with "without" solution
                 // Try recompute "without" solution
-                System.out.println("Problem without, " + count);
-
-                without = Solution.selectInitialSolution(agent.vehicles(), wonTasks);
-                without = Solution.finalSolution(without, 1000, timeoutPlan);       
+                if (verbose) {
+                    System.out.println("agent " + agent.id() + " has problem with \'without\', " + count);
+                }
+                
+                without = Solution.selectInitialSolutionBis(agent.vehicles(), wonTasks);
+                without = Solution.finalSolution(without, 10000, (timeoutBid - (now - start))/ 4);       
                 costWithout = Solution.cost(without);
             }
             
             if (problemWith) {
                 // Problem with "with" solution
                 // Recompute "with" solution
-                System.out.println("Problem with, " + count);
+                if (verbose) {
+                    System.out.println("agent " + agent.id() + " has problem with \'with\', " + count);   
+                }
 
-                with = Solution.selectInitialSolution(agent.vehicles(), wonAndToBid);
-                with = Solution.finalSolution(with, 1000, timeoutPlan);
+                with = Solution.selectInitialSolutionBis(agent.vehicles(), wonAndToBid);
+                with = Solution.finalSolution(with, 10000, (timeoutBid - (now - start)) / 4);
                 costWith = Solution.cost(with);
             }            
 
             marginalCost = costWith - costWithout;
             upperBound = costWithEstimator - costWithout;
-            problemWith = marginalCost > upperBound;
             problemWithout = marginalCost < 0;
+            problemWith = marginalCost > upperBound;
         }
         
         // Still a problem
         if (problemWithout) {
-            System.out.println("Still problem without, switching to estimator");
             // without = withoutEstimator;
             marginalCost = costWith - costWithoutEstimator;
+            if (verbose) {
+                System.out.println("agent " + agent.id() + " still has problem with \'without\', switching to estimator " + marginalCost);
+            }
         }
         
         if (problemWith) {
             // with = withEstimator;
-            System.out.println("Still problem with, switching to estimator");
             marginalCost = costWithEstimator - costWithout;
+            if (verbose) {
+                System.out.println("agent " + agent.id() + " still has problem with \'with\', switching to estimator " + marginalCost);
+            }
         }
         
         return marginalCost;
+	}
+	
+	@Override
+	public String toString() {
+	    return agent.id() + "";
 	}
 	
 }
