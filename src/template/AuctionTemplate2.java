@@ -143,7 +143,7 @@ public class AuctionTemplate2 implements AuctionBehavior {
         
         for(City from : topology.cities()) {
             for(City to : topology.cities()) {
-                if(isLink(from, to, t, wonTasks)) {
+                if(isLinkOne(from, to, t, wonTasks)) {
                     Task potential = new Task(-1, from, to, 0, 0);
                     Set<Task> includePotential = new HashSet<Task>(wonTasks);
                     includePotential.add(potential);
@@ -157,22 +157,47 @@ public class AuctionTemplate2 implements AuctionBehavior {
         return cost / weights;
     }
 	
-	private boolean isLink(City potentialFrom, City potentialTo, Task toBid, Set<Task> won) {
+	private boolean isLinkOne(City potentialFrom, City potentialTo, Task toBid, Set<Task> won) {
         boolean isLink = false;
         
-        //it is a link if there is some match between toBid's cities and link's cities
-        isLink = potentialFrom.equals(toBid.pickupCity)
-              || potentialTo.equals(toBid.deliveryCity)
-              || potentialFrom.equals(toBid.deliveryCity)
-              || potentialTo.equals(toBid.pickupCity);
-        
-        for(Task t : won) {
-            isLink = isLink || potentialFrom.equals(t.pickupCity)
-                            || potentialTo.equals(t.deliveryCity);
-        }
-        
+        isLink = won.contains(potentialFrom) && potentialTo.equals(toBid.pickupCity);
+        isLink = potentialFrom.equals(toBid) && won.contains(potentialTo);
+       
         return isLink;
 	}
+	
+	private boolean isLinkTwo(City potentialFrom, City potentialTo, Task toBid, Set<Task> won) {
+		
+		
+		
+		City closestToDelivery = null;
+		City closestToPickup = null;
+		double bestCostPickToDel = Double.MAX_VALUE;
+		double bestCostDelToPick = Double.MAX_VALUE;
+		
+		for(Task c : won) {
+			double distDelToPick = c.deliveryCity.distanceTo(toBid.pickupCity);
+			double distPickToDel = c.pickupCity.distanceTo(toBid.deliveryCity);
+			
+			if(distDelToPick < bestCostDelToPick) {
+				closestToPickup = c.deliveryCity;
+				bestCostDelToPick = distDelToPick;
+			} 
+			
+			if(distPickToDel < bestCostPickToDel) {
+				closestToDelivery = c.pickupCity;
+				bestCostPickToDel = distPickToDel;
+			}
+			
+		}
+		
+		return potentialFrom.equals(closestToPickup)&&potentialTo.equals(toBid.pickupCity)
+				|| potentialFrom.equals(toBid.deliveryCity) && potentialTo.equals(closestToDelivery);
+		
+		
+		 
+	}
+	
 	
 	private double marginalCost(Task toBid) {
 	    return marginalCost(toBid, false);
