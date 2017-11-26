@@ -160,8 +160,15 @@ public class AuctionTemplate2 implements AuctionBehavior {
 	private boolean isLinkOne(City potentialFrom, City potentialTo, Task toBid, Set<Task> won) {
         boolean isLink = false;
         
-        isLink = won.contains(potentialFrom) && potentialTo.equals(toBid.pickupCity);
-        isLink = potentialFrom.equals(toBid) && won.contains(potentialTo);
+        boolean potentialFromInWon = false;
+        boolean potentialToInWon = false;
+        for(Task t : won) {
+        	potentialFromInWon = potentialFromInWon || t.deliveryCity.equals(potentialFrom);
+        	potentialToInWon = potentialToInWon || t.pickupCity.equals(potentialTo);
+        }
+        
+        isLink = potentialFromInWon && potentialTo.equals(toBid.pickupCity);
+        isLink = isLink || (potentialFrom.equals(toBid.deliveryCity) && potentialToInWon);
        
         return isLink;
 	}
@@ -191,8 +198,8 @@ public class AuctionTemplate2 implements AuctionBehavior {
 			
 		}
 		
-		return potentialFrom.equals(closestToPickup)&&potentialTo.equals(toBid.pickupCity)
-				|| potentialFrom.equals(toBid.deliveryCity) && potentialTo.equals(closestToDelivery);
+		return (potentialFrom.equals(closestToPickup) && potentialTo.equals(toBid.pickupCity))
+				|| (potentialFrom.equals(toBid.deliveryCity) && potentialTo.equals(closestToDelivery));
 		
 		
 		 
