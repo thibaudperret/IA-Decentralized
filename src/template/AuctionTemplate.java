@@ -269,6 +269,41 @@ public class AuctionTemplate implements AuctionBehavior {
         return potentialNextCost - ourCost;
 	}
 	
+	private double bayesMargCost(Task t, Set<Task> tasks) {
+		double cost = 0;
+		double weights = 0;
+		for(City from : topology.cities()) {
+			for(City to : topology.cities()) {
+				if(isLink(from, to, t, tasks)) {
+					Task potential = new Task(-1, from, to, 0, 0);
+					Set<Task> includePotential = new HashSet<Task>(tasks);
+					includePotential.add(potential);
+					double weight = distribution.probability(from, to);
+					weights += weight;
+					cost += weight * marginalCost(includePotential, t);
+				}
+			}
+		}
+		return cost / weights;
+	}
+	
+	private boolean isLink(City potentialFrom, City potentialTo, Task toBid, Set<Task> won) {
+		boolean is_link = false;
+		
+		//it is a link if there is some match between toBid's cities and link's cities
+		is_link = is_link || potentialFrom.equals(toBid.pickupCity)
+						  || potentialTo.equals(toBid.deliveryCity)
+						  || potentialFrom.equals(toBid.deliveryCity)
+						  || potentialTo.equals(toBid.pickupCity);
+		
+		for(Task t : won) {
+			is_link = is_link || potentialFrom.equals(t.pickupCity)
+							  || potentialTo.equals(t.deliveryCity);
+		}
+		
+		return is_link;
+	}
+	
 	@Deprecated
 	private double bayesianMarginalCost(Task task) {
 	    Set<City> cities = new HashSet<City>();
